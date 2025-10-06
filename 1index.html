@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>实时 PSI 数据 - data.gov.sg</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,\"Helvetica Neue\",Arial;margin:24px;background:#f7fafc;color:#0f172a}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    .meta{font-size:13px;color:#475569}
+    table{width:100%;border-collapse:collapse;background:#fff;box-shadow:0 1px 3px rgba(2,6,23,.06)}
+    th,td{padding:10px 12px;border-bottom:1px solid #e6edf3;text-align:left}
+    th{background:#f1f5f9;font-weight:600}
+    tr:hover td{background:#fbfdff}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{padding:6px 10px;border-radius:8px;border:1px solid #cbd5e1;background:#fff;cursor:pointer}
+    .small{font-size:13px;color:#64748b}
+    .error{color:#b91c1c}
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>实时 PSI（data.gov.sg）</h1>
+      <div class="meta">从 <code>https://api.data.gov.sg/v1/environment/psi</code> 获取实时数据</div>
+    </div>
+    <div class="controls">
+      <div class="small">自动刷新间隔（秒）</div>
+      <input id="interval" type="number" min="5" value="60" style="width:80px;padding:6px;border-radius:6px;border:1px solid #cbd5e1;background:#fff" />
+      <button id="refresh">立即刷新</button>
+    </div>
+  </header>
+
+  <section>
+    <div class="small">最后更新时间： <span id="lastUpdate">-</span> &nbsp;|&nbsp; API 状态： <span id="status">-</span></div>
+    <div style="height:12px"></div>
+    <div id="error" class="error"></div>
+    <table id="psiTable" aria-describedby="lastUpdate">
+      <thead id="tableHead">
+        <!-- 动态生成 -->
+      </thead>
+      <tbody id="tableBody">
+        <!-- 动态生成 -->
+      </tbody>
+    </table>
+  </section>
+
+  <script>
+    const API = 'https://api.data.gov.sg/v1/environment/psi';
+    const tableHead = document.getElementById('tableHead');
+    const tableBody = document.getElementById('tableBody');
+    const lastUpdateEl = document.getElementById('lastUpdate');
+    const statusEl = document.getElementById('status');
+    const errorEl = document.getElementById('error');
+    const intervalInput = document.getElementById('interval');
+    const refreshBtn = document.getElementById('refresh');
+
+    let timer = null;
+
+    async function fetchPsi() {
+      errorEl.textContent = '';
+      statusEl.textContent = '请求中...';
+      try {
+        const res = await fetch(API, {cache: 'no-store'});
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // items 是数组，取第一个（最新）
+        const item = (data.items && data.items[0]) || null;
+        if (!item) throw new Error('返回数据格式不包含 items');
+
+        const readings = item.readings || {};
+        const regions = detectRegions(readings);
+
+        renderTable(readings, regions);
+
+        // 时间显示
+        lastUpdateEl.textContent = item.update_timestamp || item.timestamp || data.api_info?.timestamp || '-';
+        statusEl.textContent = 'OK';
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = '错误';
+        errorEl.textContent = '获取数据失败：' + err.message;
+        tableHead.innerHTML = '';
+        tableBody.innerHTML = '';
+      }
+    }
+
+    function detectRegions(readings) {
+      // 从 readings 的第一个 reading 的 value 对象里获取地区名称
+      const keys = Object.keys(readings);
+      for (const k of keys) {
+        const v = readings[k];
+        if (v && typeof v === 'object') {
+          return Object.keys(v);
+        }
+      }
+      // default fallback
+      return ['national'];
+    }
+
+    function renderTable(readings, regions) {
+      // head
+      const ths = ['Reading'].concat(regions);
+      tableHead.innerHTML = '<tr>' + ths.map(h=>`<th>${escapeHtml(h)}</th>`).join('') + '</tr>';
+
+      // body
+      const rows = [];
+      Object.keys(readings).forEach(readingName => {
+        const rowValues = regions.map(r => {
+          const val = readings[readingName] && readings[readingName][r];
+          return (val === null || typeof val === 'undefined') ? '-' : String(val);
+        });
+        rows.push({readingName, rowValues});
+      });
+
+      tableBody.innerHTML = rows.map(r => {
+        return '<tr>' + ['<td><strong>'+escapeHtml(r.readingName)+'</strong></td>'].concat(r.rowValues.map(v=>`<td>${escapeHtml(v)}</td>`)).join('') + '</tr>';
+      }).join('');
+    }
+
+    function escapeHtml(s){
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function startTimer(){
+      stopTimer();
+      const seconds = Number(intervalInput.value) || 60;
+      timer = setInterval(fetchPsi, Math.max(5, seconds) * 1000);
+    }
+    function stopTimer(){ if (timer) { clearInterval(timer); timer = null }}
+
+    // events
+    refreshBtn.addEventListener('click', () => { fetchPsi(); });
+    intervalInput.addEventListener('change', () => { startTimer(); });
+
+    // 初始加载
+    fetchPsi();
+    startTimer();
+  </script>
+</body>
+</html>
